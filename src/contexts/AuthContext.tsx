@@ -44,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
   
-  const register = useCallback(async (userData: any) => {
+const register = useCallback(async (userData: any) => {
     setIsLoading(true);
     setAuthError(null);
     
@@ -63,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
   
+
   const clearError = useCallback(() => {
     setAuthError(null);
   }, []);

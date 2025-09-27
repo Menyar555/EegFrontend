@@ -1,20 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import { usePatient } from '../../contexts/PatientContext';
-import { Upload, FileText, CheckCircle, AlertCircle, User, Ruler, Settings, Brain, Activity } from 'lucide-react';
-import axios from 'axios'; // Importer axios pour les appels API
+import { Upload, FileText, CheckCircle, AlertCircle, User, Ruler, Settings, Brain, Activity, Zap } from 'lucide-react';
+import axios from 'axios';
 
 interface FileUploadProps {
   patientId: string;
   onFileProcessed: (file: any, data: any, patientConfig: any) => void;
-}
-
-interface PatientConfig {
-  headCircumference: number;
-  originalElectrodes: number;
-  interpolationTarget: number;
-  age: number;
-  gender: string;
-  notes: string;
 }
 
 // Créer une instance axios avec la configuration de base
@@ -37,16 +28,54 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
   const [processingProgress, setProcessingProgress] = useState(0);
   
   // Configuration du patient
-  const [patientConfig, setPatientConfig] = useState<PatientConfig>({
+  const [patientConfig, setPatientConfig] = useState({
     headCircumference: 56, // cm - circonférence moyenne adulte
     originalElectrodes: 16, // Nombre d'électrodes original
     interpolationTarget: 32, // Nombre d'électrodes après interpolation
+    interpolationMethod: 'knn', // Méthode d'interpolation par défaut
     age: 35,
     gender: 'M',
     notes: ''
   });
 
-  const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+  // Méthodes d'interpolation disponibles
+  const interpolationMethods = [
+    {
+      id: 'knn',
+      name: 'K-Nearest Neighbors (KNN)',
+      description: 'Interpolation basée sur les k plus proches voisins',
+      precision: '±2mm',
+      speed: 'Rapide',
+      quality: 'Excellente',
+      endpoint: 'interpolate_knn_static'
+    },
+    {
+      id: 'spherical',
+      name: 'Interpolation Sphérique',
+      description: 'Interpolation sur surface sphérique avec harmoniques',
+      precision: '±1.5mm',
+      speed: 'Moyenne',
+      quality: 'Très haute',
+      endpoint: 'interpolate_knn_spherically'
+    },
+    {
+      id: 'idw',
+      name: 'Inverse Distance Weighting (IDW)',
+      description: 'Pondération par distance inverse',
+      precision: '±3mm',
+      speed: 'Très rapide',
+      quality: 'Bonne',
+      endpoint: 'interpolate_idw_static'
+    }
+  ];
+
+  // Fonction utilitaire pour obtenir l'endpoint
+  const getEndpointForMethod = (method) => {
+    const found = interpolationMethods.find(m => m.id === method);
+    return found ? found.endpoint : 'interpolate_knn_static';
+  };
+
+  const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     
@@ -77,35 +106,51 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
       }, 200);
       
       // Upload file to API
-      const response = await api.post(`/eeg/upload_edf/${patientId}`, formData, {
+      api.post(`/eeg/upload_edf/${patientId}`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
+      })
+      .then(response => {
+        const result = response.data;
+        
+        if (response.status !== 200) {
+          throw new Error(
+            result.msg || 
+            result.message || 
+            'Échec de la configuration'
+          );
+        }
+        
+        // Update the uploaded file
+        const updatedFile = {
+          ...result,
+          originalElectrodes: patientConfig.originalElectrodes,
+        };
+        
+        setUploadedFile(updatedFile);
+        setUploadProgress(100);
+        setShowConfig(true);
+        setIsUploading(false);
+      })
+      .catch(err => {
+        console.error('Erreur upload:', err);
+        setError(`Erreur lors du traitement du fichier EDF: ${err.response?.data?.msg || err.message}`);
+        setIsUploading(false);
       });
-      
-      const result = response.data;
-      
-      if (response.status !== 200) {
-        throw new Error(result.msg || 'Erreur lors du téléchargement du fichier');
-      }
-      
-      // Mettre à jour le fichier uploadé
-      const updatedFile = {
-        ...result,
-        originalElectrodes: patientConfig.originalElectrodes,
-      };
-      
-      setUploadedFile(updatedFile);
-      setUploadProgress(100);
-      setShowConfig(true);
-      setIsUploading(false);
-      
     } catch (err: any) {
       console.error('Erreur upload:', err);
       setError(`Erreur lors du traitement du fichier EDF: ${err.response?.data?.msg || err.message}`);
       setIsUploading(false);
     }
   }, [patientId, patientConfig.originalElectrodes]);
+
+  const handleConfigChange = (field: keyof PatientConfig, value: any) => {
+    setPatientConfig(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
 
   const handleConfigSubmit = async () => {
     if (!uploadedFile) {
@@ -119,11 +164,11 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
     setProcessingProgress(0);
     
     try {
-      // Étape 1: Sauvegarde des paramètres et conversion des coordonnées
+      // Step 1: Save parameters and convert coordinates
       setProcessingStep('Conversion des coordonnées...');
       setProcessingProgress(10);
       
-      const headCircumferenceMm = patientConfig.headCircumference * 10; // Convertir en mm
+      const headCircumferenceMm = patientConfig.headCircumference * 10; // Convert to mm
       
       const configResponse = await api.post(`/eeg/convert_coordinates/${patientId}`, {
         head_circumference_mm: headCircumferenceMm,
@@ -138,22 +183,24 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
         );
       }
       
-      // Stocker les positions calculées
+      // Store calculated positions
       setElectrodePositions(configResponse.data.data);
       
-      // Étape 2: Interpolation avec fichiers sphériques
-      setProcessingStep('Interpolation des signaux...');
+      // Step 2: Interpolate with chosen method
+      const selectedMethod = interpolationMethods.find(m => m.id === patientConfig.interpolationMethod);
+      setProcessingStep(`Interpolation des signaux (${selectedMethod?.name})...`);
       setProcessingProgress(60);
       
+      const endpoint = getEndpointForMethod(patientConfig.interpolationMethod);
       const interpolationResponse = await api.get(
-        `/eeg/interpolate_knn_static/${patientId}/${uploadedFile.filename}/${patientConfig.originalElectrodes}/${patientConfig.interpolationTarget}?head_circumference_mm=${headCircumferenceMm}`
+        `/eeg/${endpoint}/${patientId}/${uploadedFile.filename}/${patientConfig.originalElectrodes}/${patientConfig.interpolationTarget}?head_circumference_mm=${headCircumferenceMm}`
       );
       
       if (!interpolationResponse.data.channels) {
         throw new Error('Échec de l\'interpolation');
       }
       
-      // Étape 3: Récupération des données interpolées
+      // Step 3: Retrieve interpolated data
       setProcessingStep('Récupération des données interpolées...');
       setProcessingProgress(80);
       
@@ -165,11 +212,11 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
         throw new Error('Données interpolées invalides');
       }
       
-      // Étape 4: Préparation des données finales
+      // Step 4: Prepare final data
       setProcessingStep('Finalisation...');
       setProcessingProgress(90);
       
-      // Créer un objet avec les données EEG
+      // Create EEG data object
       const eegData = {
         timestamps: interpolatedDataResponse.data.times,
         signals: interpolatedDataResponse.data.channels.reduce((acc: any, electrode: string, index: number) => ({
@@ -186,15 +233,15 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
         interpolationInfo: {
           original: patientConfig.originalElectrodes,
           interpolated: patientConfig.interpolationTarget,
-          method: 'KNN Sphérique',
-          accuracy: '±2mm'
+          method: selectedMethod?.name || 'KNN Sphérique',
+          accuracy: selectedMethod?.precision || '±2mm'
         }
       };
       
       setProcessingProgress(100);
       setProcessingStep('Analyse terminée avec succès!');
       
-      // Petite pause pour que l'utilisateur voit le message de succès
+      // Small delay so user sees success message
       setTimeout(() => {
         onFileProcessed(uploadedFile, eegData, patientConfig);
         setIsProcessing(false);
@@ -219,13 +266,6 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
     }
   };
 
-  const handleConfigChange = (field: keyof PatientConfig, value: any) => {
-    setPatientConfig(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
   if (showConfig && uploadedFile) {
     return (
       <div className="p-8">
@@ -241,7 +281,7 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
           </div>
         </div>
         
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Configuration anatomique */}
           <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6">
             <h4 className="text-xl font-bold text-blue-900 mb-6 flex items-center space-x-2">
@@ -338,13 +378,13 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
                     <button
                       key={count}
                       onClick={() => handleConfigChange('originalElectrodes', count)}
-                      className={`p-4 rounded-xl border-2 transition-all ${
+                      className={`p-4 rounded-xl border-2 transition-all text-left ${
                         patientConfig.originalElectrodes === count
                           ? 'border-purple-500 bg-purple-100 text-purple-900'
                           : 'border-gray-200 bg-white text-gray-700 hover:border-purple-300'
                       }`}
                     >
-                      <div className="font-bold">{count} électrodes</div>
+                      <div className="font-bold text-base mb-2">{count} électrodes</div>
                       <div className="text-sm opacity-75">
                         {count === 16 && 'Configuration standard clinique'}
                         {count === 32 && 'Résolution standard'}
@@ -364,34 +404,23 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
                     <button
                       key={count}
                       onClick={() => handleConfigChange('interpolationTarget', count)}
-                      className={`p-4 rounded-xl border-2 transition-all ${
+                      className={`p-4 rounded-xl border-2 transition-all text-left ${
                         patientConfig.interpolationTarget === count
                           ? 'border-purple-500 bg-purple-100 text-purple-900'
                           : 'border-gray-200 bg-white text-gray-700 hover:border-purple-300'
                       }`}
                     >
-                      <div className="font-bold">{count}</div>
+                      <div className="font-bold text-base mb-2">{count}</div>
                       <div className="text-xs opacity-75">
-                        {count === 32 && 'Résolution standard'}
-                        {count === 64 && 'Haute résolution'}
-                        {count === 128 && 'Très haute résolution'}
+                        {count === 32 ? 'Résolution standard' :
+                         count === 64 ? 'Haute résolution' : 'Très haute résolution'}
                       </div>
                     </button>
                   ))}
                 </div>
               </div>
               
-              <div className="bg-white/80 rounded-lg p-4 border border-purple-200">
-                <h5 className="font-bold text-purple-900 mb-2">Méthode d'interpolation</h5>
-                <div className="text-sm text-purple-800 space-y-1">
-                  <div>• <strong>Algorithme:</strong> KNN sphérique</div>
-                  <div>• <strong>Précision:</strong> ±2mm anatomique</div>
-                  <div>• <strong>Base:</strong> Système 10-20 international</div>
-                  <div>• <strong>Validation:</strong> Conforme aux normes cliniques</div>
-                </div>
-              </div>
-              
-              {/* Afficher les positions calculées si disponibles */}
+              {/* Show calculated positions if available */}
               {electrodePositions && (
                 <div className="bg-white/80 rounded-lg p-4 border border-purple-200">
                   <h5 className="font-bold text-purple-900 mb-2">Positions calculées</h5>
@@ -403,14 +432,62 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
               )}
             </div>
           </div>
+
+          {/* Methods of interpolation */}
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-6">
+            <h4 className="text-xl font-bold text-amber-900 mb-6 flex items-center space-x-2">
+              <Zap className="h-6 w-6" />
+              <span>Méthode d'Interpolation</span>
+            </h4>
+            <div className="space-y-4">
+              {interpolationMethods.map(method => (
+                <button
+                  key={method.id}
+                  onClick={() => handleConfigChange('interpolationMethod', method.id)}
+                  className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
+                    patientConfig.interpolationMethod === method.id
+                      ? 'border-amber-500 bg-amber-100 text-amber-900'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-amber-300'
+                  }`}
+                >
+                  <div className="font-bold text-base mb-2">{method.name}</div>
+                  <div className="text-sm opacity-75 mb-3">{method.description}</div>
+                  <div className="grid grid-cols-1 gap-1 text-xs">
+                    <div className="flex justify-between">
+                      <span className="font-medium">Précision:</span>
+                      <span>{method.precision}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Vitesse:</span>
+                      <span>{method.speed}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Qualité:</span>
+                      <span>{method.quality}</span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6 bg-white/80 rounded-lg p-4 border border-amber-200">
+              <h5 className="font-bold text-amber-900 mb-2">Méthode sélectionnée</h5>
+              <div className="text-sm text-amber-800">
+                <div><strong>Algorithme:</strong>{interpolationMethods.find(m => m.id === patientConfig.interpolationMethod)?.name.split('(')[0].trim()}</div>
+              <div><strong>Précision:</strong>{interpolationMethods.find(m => m.id === patientConfig.interpolationMethod)?.precision}</div>
+              <div><strong>Base:</strong> Système 10-20 international</div>
+              <div><strong>Validation:</strong> Conforme aux normes cliniques</div>
+              </div>
+            </div>
+          </div>
         </div>
         
-        {/* Résumé de la configuration */}
+        {/* Summary configuration */}
         <div className="mt-8 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-6">
           <h4 className="text-xl font-bold text-green-900 mb-4">Résumé de la Configuration</h4>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-sm">
             <div className="bg-white/80 rounded-lg p-3">
-              <div className="font-bold text-green-900">Fichier EDF</div>
+              <div className="font-medium text-green-900 mb-2">Fichier EDF</div>
               <div className="text-green-700">{uploadedFile.filename}</div>
               <div className="text-xs text-green-600 mt-1">
                 {Math.round(uploadedFile.duration / 60)} min • {uploadedFile.sfreq} Hz
@@ -418,7 +495,7 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
             </div>
             
             <div className="bg-white/80 rounded-lg p-3">
-              <div className="font-bold text-green-900">Anatomie</div>
+              <div className="font-medium text-green-900 mb-2">Anatomie</div>
               <div className="text-green-700">{patientConfig.headCircumference} cm</div>
               <div className="text-xs text-green-600 mt-1">
                 {patientConfig.age} ans • {patientConfig.gender === 'M' ? 'Masculin' : 'Féminin'}
@@ -426,27 +503,37 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
             </div>
             
             <div className="bg-white/80 rounded-lg p-3">
-              <div className="font-bold text-green-900">Électrodes</div>
+              <div className="font-medium text-green-900 mb-2">Électrodes</div>
               <div className="text-green-700">{patientConfig.originalElectrodes} → {patientConfig.interpolationTarget}</div>
               <div className="text-xs text-green-600 mt-1">
                 Facteur: ×{(patientConfig.interpolationTarget / patientConfig.originalElectrodes).toFixed(1)}
               </div>
             </div>
+
+            <div className="bg-white/80 rounded-lg p-3">
+              <div className="font-medium text-green-900 mb-2">Méthode</div>
+              <div className="text-green-700">
+                {interpolationMethods.find(m => m.id === patientConfig.interpolationMethod)?.name.split('(')[0].trim()}
+              </div>
+              <div className="text-xs text-green-600 mt-1">
+                {interpolationMethods.find(m => m.id === patientConfig.interpolationMethod)?.precision}
+              </div>
+            </div>
             
             <div className="bg-white/80 rounded-lg p-3">
-              <div className="font-bold text-green-900">Résolution</div>
+              <div className="font-medium text-green-900 mb-2">Résolution</div>
               <div className="text-green-700">
                 {patientConfig.interpolationTarget === 32 ? 'Standard' :
                  patientConfig.interpolationTarget === 64 ? 'Haute' : 'Très haute'}
               </div>
               <div className="text-xs text-green-600 mt-1">
-                Précision ±2mm
+                {interpolationMethods.find(m => m.id === patientConfig.interpolationMethod)?.quality}
               </div>
             </div>
           </div>
         </div>
         
-        {/* Boutons d'action */}
+        {/* Action buttons */}
         <div className="mt-8 flex space-x-4">
           <button
             onClick={handleConfigSubmit}
@@ -484,7 +571,7 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
           </button>
         </div>
         
-        {/* Barre de progression du traitement */}
+        {/* Processing bar */}
         {isProcessing && (
           <div className="mt-6 bg-white border border-gray-200 rounded-lg p-4">
             <div className="flex justify-between mb-2">
@@ -497,10 +584,11 @@ export default function FileUpload({ patientId, onFileProcessed }: FileUploadPro
                 style={{ width: `${processingProgress}%` }}
               ></div>
             </div>
+            <p className="text-sm text-gray-600 mt-2">{processingStep}</p>
           </div>
         )}
         
-        {/* Afficher les erreurs */}
+        {/* Error display */}
         {error && (
           <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
             <div className="flex items-center space-x-2 text-red-700">

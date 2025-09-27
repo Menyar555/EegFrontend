@@ -19,7 +19,7 @@ function AppContent() {
   
   return user ? <Dashboard /> : <LoginPage />;
 }
-
+ 
 function App() {
   return (
     <AuthProvider>

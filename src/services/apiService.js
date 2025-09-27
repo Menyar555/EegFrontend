@@ -45,18 +45,18 @@ class ApiService {
   }
 
   // Interpoler les données
-  async interpolateData(patientId, edfFilename, srcSize, targetSize, headCircumferenceMm) {
+async interpolateData(patientId, edfFilename, srcSize, targetSize, headCircumferenceMm, interpolationMethod = 'knn') {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/eeg/interpolate_knn_spherical_direct/${patientId}/${edfFilename}/${srcSize}/${targetSize}?head_circumference_mm=${headCircumferenceMm}`
-      );
-      if (!response.ok) throw new Error('Failed to interpolate data');
-      return response.json();
+        const response = await api.get(
+            `/eeg/interpolate_${interpolationMethod}_static/${patientId}/${edfFilename}/${srcSize}/${targetSize}?head_circumference_mm=${headCircumferenceMm}`
+        );
+        if (!response.ok) throw new Error('Failed to interpolate data');
+        return response.json();
     } catch (error) {
-      console.error('Error interpolating data:', error);
-      throw error;
+        console.error('Error interpolating data:', error);
+        throw error;
     }
-  }
+}
 
   // Récupérer les positions des électrodes
   async getElectrodePositions(patientId, size = null) {
