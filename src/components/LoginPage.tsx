@@ -8,7 +8,8 @@ export default function LoginPage() {
     username: '',
     password: '',
     confirmPassword: '',
-    name: '',
+    prenom: '',     // Nouveau champ pour le prénom
+    nom: '',        // Nouveau champ pour le nom
     email: '',
     phone: '',
     role: 'doctor' as 'doctor' | 'admin',
@@ -41,12 +42,15 @@ export default function LoginPage() {
         return;
       }
       
-      if (!formData.name || !formData.email || !formData.username) {
+      if (!formData.prenom || !formData.nom || !formData.email || !formData.username) {
         setError('Veuillez remplir tous les champs obligatoires');
         return;
       }
 
-      const success = await register(formData);
+      const success = await register({
+        ...formData,
+        name: `${formData.prenom} ${formData.nom}` // Combiner prénom et nom pour le backend si nécessaire
+      });
       if (success) {
         setSuccess('Compte créé avec succès ! Vous pouvez maintenant vous connecter.');
         setMode('login');
@@ -54,7 +58,8 @@ export default function LoginPage() {
           username: formData.username,
           password: '',
           confirmPassword: '',
-          name: '',
+          prenom: '',
+          nom: '',
           email: '',
           phone: '',
           role: 'doctor',
@@ -82,7 +87,8 @@ export default function LoginPage() {
       username: '',
       password: '',
       confirmPassword: '',
-      name: '',
+      prenom: '',
+      nom: '',
       email: '',
       phone: '',
       role: 'doctor',
@@ -188,17 +194,35 @@ export default function LoginPage() {
                 <div className="grid grid-cols-1 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-200 mb-2">
-                      Nom complet *
+                      Prénom *
                     </label>
                     <div className="relative group">
                       <User className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 group-focus-within:text-blue-400 transition-colors" />
                       <input
                         type="text"
-                        name="name"
-                        value={formData.name}
+                        name="prenom"
+                        value={formData.prenom}
                         onChange={handleChange}
                         className="pl-12 w-full px-4 py-4 bg-white/10 border border-white/20 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400 backdrop-blur-sm"
-                        placeholder="Dr. Jean Martin"
+                        placeholder="Jean"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-200 mb-2">
+                      Nom de famille *
+                    </label>
+                    <div className="relative group">
+                      <User className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 group-focus-within:text-blue-400 transition-colors" />
+                      <input
+                        type="text"
+                        name="nom"
+                        value={formData.nom}
+                        onChange={handleChange}
+                        className="pl-12 w-full px-4 py-4 bg-white/10 border border-white/20 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white placeholder-gray-400 backdrop-blur-sm"
+                        placeholder="Martin"
                         required
                       />
                     </div>
@@ -445,12 +469,12 @@ export default function LoginPage() {
               </div>
             </div>
           )}
-        </div>
 
-        {/* Footer */}
-        <div className="text-center text-gray-400 text-sm">
-          <p>© 2025 NeuroAnalytics - Analyse EEG Professionnelle</p>
-          <p className="mt-1">Sécurisé • Confidentiel • Certifié Médical</p>
+          {/* Footer */}
+          <div className="text-center text-gray-400 text-sm">
+            <p>© 2025 NeuroAnalytics - Analyse EEG Professionnelle</p>
+            <p className="mt-1">Sécurisé • Confidentiel • Certifié Médical</p>
+          </div>
         </div>
       </div>
     </div>
