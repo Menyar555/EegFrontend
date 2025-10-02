@@ -7,6 +7,7 @@ interface PatientContextType {
   eegFiles: EEGFile[];
   analyses: EEGAnalysis[];
   selectedPatient: Patient | null;
+  loading: boolean;
   addPatient: (patient: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   updatePatient: (id: string, patient: Partial<Patient>) => Promise<void>;
   deletePatient: (id: string) => Promise<void>;
@@ -17,21 +18,24 @@ interface PatientContextType {
   getPatientAnalyses: (patientId: string) => EEGAnalysis[];
   saveAnalysis: (analysis: EEGAnalysis) => void;
   getAnalysisById: (analysisId: string) => EEGAnalysis | undefined;
+  setDoctor: (doctorId: string) => Promise<void>;
 }
 
 const PatientContext = createContext<PatientContextType | undefined>(undefined);
 
 export function PatientProvider({ children }: { children: ReactNode }) {
-  // Suppression de la dépendance à l'authentification
   const [patients, setPatients] = useState<Patient[]>([]);
   const [eegFiles, setEEGFiles] = useState<EEGFile[]>([]);
   const [analyses, setAnalyses] = useState<EEGAnalysis[]>([]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [doctorId, setDoctorId] = useState<string>("default_doctor_id");
   
   useEffect(() => {
-    // Chargement des patients sans vérification d'authentification
+    // Charger les patients au démarrage
     const fetchPatients = async () => {
       try {
+        setLoading(true);
         const response = await api.get('/patients');
         const fetchedPatients = response.data.map((p: any) => ({
           id: p._id,
@@ -51,122 +55,181 @@ export function PatientProvider({ children }: { children: ReactNode }) {
         
         const files = response.data.flatMap((p: any) =>
           (p.edf_files || []).map((f: any) => ({
-            id: f.filename,
+            id: f.id,
             patientId: p._id,
             filename: f.filename,
-            uploadDate: f.upload_date,
-            duration: f.duration,
-            samplingRate: f.sfreq,
-            nChannels: f.n_channels,
+            uploadDate: f.uploadDate,
+            duration: f.duration || 0,
+            samplingRate: f.samplingRate || 0,
+            nChannels: f.nChannels || 0,
             electrodes: f.electrodes || [],
             processed: f.processed || false,
           }))
         );
         setEEGFiles(files);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Erreur lors du chargement des patients:', err);
+        // Afficher un message d'erreur à l'utilisateur
+        if (err.response) {
+          console.error('Response data:', err.response.data);
+          console.error('Response status:', err.response.status);
+        }
+      } finally {
+        setLoading(false);
       }
     };
     
     fetchPatients();
-  }, []); // Suppression de la dépendance à user
+  }, [doctorId]);
+  
+  const setDoctor = async (doctorId: string) => {
+    try {
+      await api.post(`/set-doctor/${doctorId}`);
+      setDoctorId(doctorId);
+    } catch (err: any) {
+      console.error('Erreur lors de la définition du docteur:', err);
+      throw new Error('Erreur lors de la définition du docteur');
+    }
+  };
   
   const addPatient = async (patientData: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newPatient = {
-      id: patientData.dossierNumber,
-      numero_dossier: patientData.dossierNumber,
-      date_naissance: patientData.dateOfBirth,
-      autres_info: {
-        firstName: patientData.firstName,
-        lastName: patientData.lastName,
-        gender: patientData.gender,
-        email: patientData.email,
-        phone: patientData.phone,
-        address: patientData.address,
-        medicalHistory: patientData.medicalHistory,
-      },
-    };
-    
-    const response = await api.post('/patients', newPatient);
-    
-    setPatients([...patients, {
-      ...patientData,
-      id: response.data.id,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }]);
+    try {
+      const newPatient = {
+        id: patientData.dossierNumber,
+        numero_dossier: patientData.dossierNumber,
+        date_naissance: patientData.dateOfBirth,
+        autres_info: {
+          firstName: patientData.firstName,
+          lastName: patientData.lastName,
+          gender: patientData.gender,
+          email: patientData.email,
+          phone: patientData.phone,
+          address: patientData.address,
+          medicalHistory: patientData.medicalHistory,
+        },
+      };
+      
+      const response = await api.post('/patients', newPatient);
+      
+      // Ajouter le nouveau patient à la liste locale
+      const createdPatient = {
+        ...patientData,
+        id: response.data.patient._id,
+        createdAt: response.data.patient.createdAt,
+        updatedAt: response.data.patient.updatedAt,
+      };
+      
+      setPatients([...patients, createdPatient]);
+    } catch (err: any) {
+      console.error('Erreur lors de l\'ajout du patient:', err);
+      if (err.response) {
+        console.error('Response data:', err.response.data);
+        console.error('Response status:', err.response.status);
+        throw new Error(err.response.data.msg || 'Erreur lors de l\'ajout du patient');
+      }
+      throw new Error('Erreur lors de l\'ajout du patient');
+    }
   };
   
   const updatePatient = async (id: string, patientData: Partial<Patient>) => {
-    const updatedData = {
-      numero_dossier: patientData.dossierNumber,
-      date_naissance: patientData.dateOfBirth,
-      autres_info: {
-        firstName: patientData.firstName,
-        lastName: patientData.lastName,
-        gender: patientData.gender,
-        email: patientData.email,
-        phone: patientData.phone,
-        address: patientData.address,
-        medicalHistory: patientData.medicalHistory,
-      },
-    };
-    
-    await api.put(`/patients/${id}`, updatedData);
-    
-    const updatedPatients = patients.map(patient =>
-      patient.id === id ? { ...patient, ...patientData, updatedAt: new Date().toISOString() } : patient
-    );
-    
-    setPatients(updatedPatients);
-    
-    if (selectedPatient?.id === id) {
-      setSelectedPatient(updatedPatients.find(p => p.id === id) || null);
+    try {
+      const updatedData = {
+        numero_dossier: patientData.dossierNumber,
+        date_naissance: patientData.dateOfBirth,
+        autres_info: {
+          firstName: patientData.firstName,
+          lastName: patientData.lastName,
+          gender: patientData.gender,
+          email: patientData.email,
+          phone: patientData.phone,
+          address: patientData.address,
+          medicalHistory: patientData.medicalHistory,
+        },
+      };
+      
+      await api.put(`/patients/${id}`, updatedData);
+      
+      const updatedPatients = patients.map(patient =>
+        patient.id === id ? { ...patient, ...patientData, updatedAt: new Date().toISOString() } : patient
+      );
+      
+      setPatients(updatedPatients);
+      
+      if (selectedPatient?.id === id) {
+        setSelectedPatient(updatedPatients.find(p => p.id === id) || null);
+      }
+    } catch (err: any) {
+      console.error('Erreur lors de la mise à jour du patient:', err);
+      if (err.response) {
+        console.error('Response data:', err.response.data);
+        console.error('Response status:', err.response.status);
+        throw new Error(err.response.data.msg || 'Erreur lors de la mise à jour du patient');
+      }
+      throw new Error('Erreur lors de la mise à jour du patient');
     }
   };
   
   const deletePatient = async (id: string) => {
-    await api.delete(`/patients/${id}`);
-    
-    const updatedPatients = patients.filter(patient => patient.id !== id);
-    setPatients(updatedPatients);
-    
-    if (selectedPatient?.id === id) {
-      setSelectedPatient(null);
+    try {
+      await api.delete(`/patients/${id}`);
+      
+      const updatedPatients = patients.filter(patient => patient.id !== id);
+      setPatients(updatedPatients);
+      
+      if (selectedPatient?.id === id) {
+        setSelectedPatient(null);
+      }
+    } catch (err: any) {
+      console.error('Erreur lors de la suppression du patient:', err);
+      if (err.response) {
+        console.error('Response data:', err.response.data);
+        console.error('Response status:', err.response.status);
+        throw new Error(err.response.data.msg || 'Erreur lors de la suppression du patient');
+      }
+      throw new Error('Erreur lors de la suppression du patient');
     }
   };
   
   const addMultiplePatients = async (patientsData: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>[]) => {
-    const newPatients = patientsData.map(patientData => ({
-      id: patientData.dossierNumber,
-      numero_dossier: patientData.dossierNumber,
-      date_naissance: patientData.dateOfBirth,
-      autres_info: {
-        firstName: patientData.firstName,
-        lastName: patientData.lastName,
-        gender: patientData.gender,
-        email: patientData.email,
-        phone: patientData.phone,
-        address: patientData.address,
-        medicalHistory: patientData.medicalHistory,
-      },
-    }));
-    
-    const updatedPatients = [...patients];
-    
-    for (const patient of newPatients) {
-      const response = await api.post('/patients', patient);
-      updatedPatients.push({
-        ...patient.autres_info,
-        id: response.data.id,
-        dossierNumber: patient.numero_dossier,
-        dateOfBirth: patient.date_naissance,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
+    try {
+      const updatedPatients = [...patients];
+      
+      for (const patientData of patientsData) {
+        const newPatient = {
+          id: patientData.dossierNumber,
+          numero_dossier: patientData.dossierNumber,
+          date_naissance: patientData.dateOfBirth,
+          autres_info: {
+            firstName: patientData.firstName,
+            lastName: patientData.lastName,
+            gender: patientData.gender,
+            email: patientData.email,
+            phone: patientData.phone,
+            address: patientData.address,
+            medicalHistory: patientData.medicalHistory,
+          },
+        };
+        
+        const response = await api.post('/patients', newPatient);
+        
+        updatedPatients.push({
+          ...patientData,
+          id: response.data.patient._id,
+          createdAt: response.data.patient.createdAt,
+          updatedAt: response.data.patient.updatedAt,
+        });
+      }
+      
+      setPatients(updatedPatients);
+    } catch (err: any) {
+      console.error('Erreur lors de l\'ajout multiple de patients:', err);
+      if (err.response) {
+        console.error('Response data:', err.response.data);
+        console.error('Response status:', err.response.status);
+        throw new Error(err.response.data.msg || 'Erreur lors de l\'ajout des patients');
+      }
+      throw new Error('Erreur lors de l\'ajout des patients');
     }
-    
-    setPatients(updatedPatients);
   };
   
   const selectPatient = (patient: Patient) => {
@@ -176,22 +239,23 @@ export function PatientProvider({ children }: { children: ReactNode }) {
   const uploadEEGFile = async (file: File, patientId: string): Promise<EEGFile> => {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('patientId', patientId);
     
     try {
-      const response = await api.post(`/eeg/upload_edf/${patientId}`, formData, {
+      const response = await api.post('/patients/files', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       
       const newFile: EEGFile = {
-        id: response.data.filename,
+        id: response.data.id,
         patientId,
         filename: response.data.filename,
-        uploadDate: response.data.upload_date || new Date().toISOString(),
-        duration: response.data.info.duration || 0,
-        samplingRate: response.data.info.sfreq || 0,
-        nChannels: response.data.info.n_channels || 0,
-        electrodes: response.data.electrodes || [],
-        processed: false,
+        uploadDate: response.data.uploadDate,
+        duration: 0, // Ces valeurs seraient normalement retournées par le backend
+        samplingRate: 0,
+        nChannels: 0,
+        electrodes: [],
+        processed: response.data.processed,
       };
       
       setEEGFiles([...eegFiles, newFile]);
@@ -236,6 +300,7 @@ export function PatientProvider({ children }: { children: ReactNode }) {
       eegFiles,
       analyses,
       selectedPatient,
+      loading,
       addPatient,
       updatePatient,
       deletePatient,
@@ -246,6 +311,7 @@ export function PatientProvider({ children }: { children: ReactNode }) {
       getPatientAnalyses,
       saveAnalysis,
       getAnalysisById,
+      setDoctor,
     }}>
       {children}
     </PatientContext.Provider>

@@ -27,7 +27,7 @@ export default function PatientList() {
     return age;
   };
 
-  // Filter and sort patients
+  // Filtrer et trier les patients
   const filteredPatients = patients
     .filter(patient => {
       const matchesSearch = 
@@ -54,7 +54,7 @@ export default function PatientList() {
 
   const handleViewAnalysis = (patient: any) => {
     selectPatient(patient);
-    // Trigger navigation to analysis view
+    // Déclenche la navigation vers la vue d'analyse
     window.dispatchEvent(new CustomEvent('navigate-to-analysis'));
   };
 
@@ -113,7 +113,7 @@ export default function PatientList() {
           </div>
         </div>
 
-        {/* Search and Filter Controls */}
+        {/* Contrôles de recherche et filtrage */}
         <div className="bg-gray-50 p-4 rounded-lg mb-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-2">
@@ -185,7 +185,7 @@ export default function PatientList() {
                 }`}
               >
                 {isEditing ? (
-                  // Edit Mode
+                  // Mode édition
                   <div className="space-y-4">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-xl font-bold text-gray-900">Modifier le patient</h3>
@@ -263,7 +263,7 @@ export default function PatientList() {
                     </div>
                   </div>
                 ) : (
-                  // View Mode
+                  // Mode affichage
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
                       <div className="flex items-center space-x-4 mb-4">
